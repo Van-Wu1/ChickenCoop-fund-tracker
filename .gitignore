@@ -1,0 +1,61 @@
+# Dependencies & build
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# TypeScript / Vite cache
+*.tsbuildinfo
+.vite/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Editor & OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Cursor / local tooling
+.cursor/
+tmp.txt
+*.tmp
+
+# ── Personal fund data (never commit) ──
+private/localFunds.ts
+private/*.json
+!private/funds.seed.example.json
+private/*.xlsx
+private/exports/
+
+# App export backups (downloaded from settings)
+农场主的鸡窝-*.json
+农场主的鸡窝-*.xlsx
+神秘代码-*.json
+神秘代码-*.xlsx
+fund-tracker-*.json
+fund-tracker-*.xlsx
+**/exports/*.json
+**/exports/*.xlsx
+
+# Optional: keep example templates trackable
+!private/localFunds.example.ts
