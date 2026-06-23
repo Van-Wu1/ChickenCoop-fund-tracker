@@ -1,90 +1,10 @@
 import type { Fund } from '../types';
 import type { FundNavQuote } from '../types';
 import {
-  backfillFundFromNavMap,
+  backfillFundFromNavMapDetailed,
 } from './backfillNav';
 import { fetchFundNav, fetchNavMapForFund } from './fundApi';
 import { normalizeDateToISO } from './calculations';
-import {
-  addRecordToFund,
-  computeTransaction,
-} from './calculations';
-
-function getPreviousTransaction(
-  fund: Fund,
-  current: { id: string },
-) {
-  const idx = fund.transactions.findIndex((t) => t.id === current.id);
-  if (idx <= 0) return null;
-  return fund.transactions[idx - 1];
-}
-
-function findTransactionOnDate(fund: Fund, navDate: string) {
-  const iso = normalizeDateToISO(navDate);
-  return fund.transactions.find(
-    (t) => t.date && normalizeDateToISO(t.date) === iso,
-  );
-}
-
-function updateTransactionUnitNav(
-  fund: Fund,
-  target: { id: string; date: string; amount: number; confirmedNav: number; fee: number; confirmedShares: number },
-  quote: FundNavQuote,
-): Fund {
-  const prev = getPreviousTransaction(fund, target);
-  const isNavOnly = target.amount === 0 && target.confirmedShares === 0;
-  const tx = computeTransaction(
-    {
-      date: target.date,
-      amount: target.amount,
-      confirmedNav: target.confirmedNav,
-      fee: target.fee,
-      unitNav: quote.unitNav,
-      isNavOnly,
-    },
-    prev,
-  );
-  if (quote.dailyChange !== null) {
-    tx.dailyChange = quote.dailyChange;
-  }
-  return {
-    ...fund,
-    transactions: fund.transactions.map((t) =>
-      t.id === target.id ? { ...tx, id: target.id } : t,
-    ),
-  };
-}
-
-/** 将天天基金净值写入持仓记录（仅匹配同日期记录） */
-export function applyNavQuote(fund: Fund, quote: FundNavQuote): Fund {
-  const updatedFund: Fund = {
-    ...fund,
-    name: quote.name || fund.name,
-    sector: quote.sector || fund.sector,
-  };
-
-  const onDate = findTransactionOnDate(updatedFund, quote.navDate);
-  if (
-    onDate &&
-    onDate.unitNav !== null &&
-    Math.abs(onDate.unitNav - quote.unitNav) < 0.0001
-  ) {
-    return updatedFund;
-  }
-
-  if (onDate) {
-    return updateTransactionUnitNav(updatedFund, onDate, quote);
-  }
-
-  return addRecordToFund(updatedFund, {
-    date: quote.navDate,
-    amount: 0,
-    confirmedNav: 0,
-    fee: 0,
-    unitNav: quote.unitNav,
-    isNavOnly: true,
-  });
-}
 
 export interface SyncResult {
   code: string;
@@ -94,38 +14,35 @@ export interface SyncResult {
   quote?: FundNavQuote;
 }
 
-export function syncFundNav(
-  fund: Fund,
-  quote: FundNavQuote,
-): { fund: Fund; result: SyncResult } {
-  const before = findTransactionOnDate(fund, quote.navDate);
-  const updated = applyNavQuote(fund, quote);
-  const after = findTransactionOnDate(updated, quote.navDate);
-
-  const unchanged =
-    before?.unitNav === after?.unitNav &&
-    (before?.unitNav !== null || before === after);
-
-  return {
-    fund: updated,
-    result: {
-      code: fund.code,
-      name: quote.name || fund.name,
-      success: true,
-      message: unchanged
-        ? `已是最新（${quote.navDate} 净值 ${quote.unitNav.toFixed(4)}）`
-        : `已更新 ${quote.navDate} 净值 ${quote.unitNav.toFixed(4)}`,
-      quote,
-    },
-  };
+function formatBackfillMessage(
+  navDays: number,
+  refreshed: number,
+  inserted: number,
+): string {
+  const parts: string[] = [`已匹配 ${navDays} 日官方净值`];
+  if (refreshed > 0) parts.push(`修正 ${refreshed} 条收盘净值`);
+  if (inserted > 0) parts.push(`补全 ${inserted} 个无交易交易日`);
+  return parts.join('，');
 }
 
-/** 拉取历史净值补全所有交易记录，并同步最新净值 */
+function countMatchedTransactionDates(fund: Fund, navMap: Map<string, unknown>): number {
+  const dates = new Set(
+    fund.transactions
+      .filter((t) => t.date)
+      .map((t) => normalizeDateToISO(t.date)),
+  );
+  let matched = 0;
+  for (const date of dates) {
+    if (navMap.has(date)) matched += 1;
+  }
+  return matched;
+}
+
+/** 拉取历史净值补全所有交易记录，并同步最新净值（全程重建收益） */
 export async function syncFundComplete(fund: Fund): Promise<{
   fund: Fund;
   result: SyncResult;
 }> {
-  let backfillMsg = '';
   const navMap = await fetchNavMapForFund(fund);
 
   let quote: FundNavQuote | null = null;
@@ -142,55 +59,121 @@ export async function syncFundComplete(fund: Fund): Promise<{
     // 历史净值仍可用于按日期补全
   }
 
+  if (navMap.size === 0 && !quote) {
+    throw new Error(`${fund.code} 无法获取净值数据，请检查网络后重试`);
+  }
+
+  const txDateCount = new Set(
+    fund.transactions.filter((t) => t.date).map((t) => normalizeDateToISO(t.date)),
+  ).size;
+  const matchedTxDates = countMatchedTransactionDates(fund, navMap);
+
+  if (txDateCount > 0 && matchedTxDates === 0) {
+    throw new Error(
+      `${fund.code} 官方净值日期与交易记录对不上（记录 ${txDateCount} 天，匹配 0 天），请检查交易日期`,
+    );
+  }
+
   let working = fund;
+  let backfillMsg = '';
+  let refreshedRows = 0;
+  let insertedNavDays = 0;
+
   if (navMap.size > 0) {
-    working = backfillFundFromNavMap(fund, navMap);
-    backfillMsg = `已按日期匹配 ${navMap.size} 日净值`;
+    const backfill = backfillFundFromNavMapDetailed(fund, navMap);
+    working = backfill.fund;
+    refreshedRows = backfill.refreshedRows;
+    insertedNavDays = backfill.insertedNavDays;
+    backfillMsg = formatBackfillMessage(
+      navMap.size,
+      refreshedRows,
+      insertedNavDays,
+    );
   }
 
   if (quote) {
-    const quoteIso = normalizeDateToISO(quote.navDate);
-    const hasRowOnQuoteDate = working.transactions.some(
-      (t) => t.date && normalizeDateToISO(t.date) === quoteIso,
-    );
-    if (!hasRowOnQuoteDate) {
-      const { fund: synced, result } = syncFundNav(working, quote);
-      return {
-        fund: synced,
-        result: {
-          ...result,
-          message: backfillMsg
-            ? `${backfillMsg}；${result.message}`
-            : result.message,
-        },
-      };
-    }
-
-    return {
-      fund: working,
-      result: {
-        code: fund.code,
-        name: quote.name || fund.name,
-        success: true,
-        message: backfillMsg
-          ? `${backfillMsg}；最新 ${quote.navDate} 净值 ${quote.unitNav.toFixed(4)}`
-          : `已是最新（${quote.navDate} 净值 ${quote.unitNav.toFixed(4)}）`,
-        quote,
-      },
+    working = {
+      ...working,
+      name: quote.name || working.name,
+      sector: quote.sector || working.sector,
     };
   }
 
-  if (backfillMsg) {
-    return {
-      fund: working,
-      result: {
-        code: fund.code,
-        name: fund.name,
-        success: true,
-        message: backfillMsg,
-      },
-    };
+  const quoteIso = quote ? normalizeDateToISO(quote.navDate) : null;
+  const latestMsg = quote
+    ? quoteIso && refreshedRows === 0 && insertedNavDays === 0
+      ? `已是最新（${quoteIso} 净值 ${quote.unitNav.toFixed(4)}）`
+      : quoteIso
+        ? `最新 ${quoteIso} 净值 ${quote.unitNav.toFixed(4)}`
+        : ''
+    : '';
+
+  if (txDateCount > 0 && matchedTxDates < txDateCount) {
+    const warn = `仅 ${matchedTxDates}/${txDateCount} 个交易日匹配到官方净值`;
+    backfillMsg = backfillMsg ? `${backfillMsg}；${warn}` : warn;
   }
 
-  throw new Error(`${fund.code} 无法获取净值数据`);
+  return {
+    fund: working,
+    result: {
+      code: fund.code,
+      name: quote?.name || fund.name,
+      success: true,
+      message: [backfillMsg, latestMsg].filter(Boolean).join('；') || '净值已同步',
+      quote: quote ?? undefined,
+    },
+  };
+}
+
+/** 将天天基金净值写入持仓记录（仅匹配同日期记录） */
+export function applyNavQuote(fund: Fund, quote: FundNavQuote): Fund {
+  const quoteIso = normalizeDateToISO(quote.navDate);
+  const navMap = new Map([
+    [
+      quoteIso,
+      {
+        date: quoteIso,
+        unitNav: quote.unitNav,
+        accumulatedNav: quote.unitNav,
+        dailyChange: quote.dailyChange,
+      },
+    ],
+  ]);
+  const { fund: updated } = backfillFundFromNavMapDetailed(fund, navMap);
+  return {
+    ...updated,
+    name: quote.name || fund.name,
+    sector: quote.sector || fund.sector,
+  };
+}
+
+export function syncFundNav(
+  fund: Fund,
+  quote: FundNavQuote,
+): { fund: Fund; result: SyncResult } {
+  const quoteIso = normalizeDateToISO(quote.navDate);
+  const before = fund.transactions.find(
+    (t) => t.date && normalizeDateToISO(t.date) === quoteIso,
+  );
+  const updated = applyNavQuote(fund, { ...quote, navDate: quoteIso });
+  const after = updated.transactions.find(
+    (t) => t.date && normalizeDateToISO(t.date) === quoteIso,
+  );
+
+  const unchanged =
+    before?.unitNav === after?.unitNav &&
+    before?.dailyProfit === after?.dailyProfit;
+
+  return {
+    fund: updated,
+    result: {
+      code: fund.code,
+      name: quote.name || fund.name,
+      success: true,
+      message: unchanged
+        ? `已是最新（${quoteIso} 净值 ${quote.unitNav.toFixed(4)}）`
+        : `已更新 ${quoteIso} 净值 ${quote.unitNav.toFixed(4)}`,
+      quote: { ...quote, navDate: quoteIso },
+    },
+  };
 }

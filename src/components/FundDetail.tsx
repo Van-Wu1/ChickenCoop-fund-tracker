@@ -6,6 +6,7 @@ import {
   formatMoney,
   formatPercent,
   getFundStats,
+  isFundClosed,
   profitColor,
 } from '../utils/calculations';
 import { fundNeedsNavBackfill } from '../utils/backfillNav';
@@ -17,6 +18,8 @@ interface FundDetailProps {
   onBack: () => void;
   onAddRecord: () => void;
   onBatchDca: () => void;
+  onConvert: () => void;
+  onSellClear: () => void;
   onEditRecord: (tx: Transaction) => void;
   onDeleteRecord: (tx: Transaction) => void;
   onDeleteFund: () => void;
@@ -24,6 +27,7 @@ interface FundDetailProps {
 }
 
 function recordType(tx: Transaction): string {
+  if (tx.kind === 'sell') return '卖出清仓';
   if (tx.amount > 0) return '定投购入';
   if (tx.unitNav !== null) return '收盘更新';
   return '待完善';
@@ -34,12 +38,15 @@ export function FundDetail({
   onBack,
   onAddRecord,
   onBatchDca,
+  onConvert,
+  onSellClear,
   onEditRecord,
   onDeleteRecord,
   onDeleteFund,
   onSync,
 }: FundDetailProps) {
   const stats = getFundStats(fund);
+  const closed = isFundClosed(fund);
   const records = [...fund.transactions.filter((t) => t.date)].sort((a, b) =>
     compareDate(b.date, a.date),
   );
@@ -48,7 +55,7 @@ export function FundDetail({
   const syncGenRef = useRef(0);
 
   useEffect(() => {
-    if (!fundNeedsNavBackfill(fund)) return;
+    if (!fundNeedsNavBackfill(fund) || isFundClosed(fund)) return;
 
     const gen = ++syncGenRef.current;
     let cancelled = false;
@@ -100,20 +107,38 @@ export function FundDetail({
         </button>
         <h1>{fund.name}</h1>
         <div className="header-actions">
-          <button
-            className="header-action-btn btn btn-sm"
-            onClick={onBatchDca}
-            type="button"
-          >
-            批量定投
-          </button>
-          <button
-            className="header-action-btn btn btn-primary btn-sm"
-            onClick={onAddRecord}
-            type="button"
-          >
-            添加记录
-          </button>
+          {!closed && (
+            <>
+              <button
+                className="header-action-btn btn btn-sm"
+                onClick={onConvert}
+                type="button"
+              >
+                转化
+              </button>
+              <button
+                className="header-action-btn btn btn-sm"
+                onClick={onSellClear}
+                type="button"
+              >
+                卖出/清仓
+              </button>
+              <button
+                className="header-action-btn btn btn-sm"
+                onClick={onBatchDca}
+                type="button"
+              >
+                批量定投
+              </button>
+              <button
+                className="header-action-btn btn btn-primary btn-sm"
+                onClick={onAddRecord}
+                type="button"
+              >
+                添加记录
+              </button>
+            </>
+          )}
           <button
             className="header-action-btn btn btn-danger btn-sm"
             onClick={onDeleteFund}
@@ -124,14 +149,22 @@ export function FundDetail({
         </div>
       </header>
 
+      {closed && (
+        <p className="fund-closed-banner">已清仓 · 保留历史记录与累计盈亏</p>
+      )}
+
       <div className="detail-summary">
         <div className="summary-item">
-          <span className="summary-label">持有市值</span>
-          <span className="summary-value">¥{formatMoney(stats.marketValue)}</span>
+          <span className="summary-label">{closed ? '已实现市值' : '持有市值'}</span>
+          <span className="summary-value">
+            {closed ? '—' : `¥${formatMoney(stats.marketValue)}`}
+          </span>
         </div>
         <div className="summary-item">
-          <span className="summary-label">持有成本</span>
-          <span className="summary-value">¥{formatMoney(stats.cost)}</span>
+          <span className="summary-label">{closed ? '持仓成本' : '持有成本'}</span>
+          <span className="summary-value">
+            {closed ? '—' : `¥${formatMoney(stats.cost)}`}
+          </span>
         </div>
         <div className="summary-item">
           <span className="summary-label">
@@ -153,7 +186,7 @@ export function FundDetail({
         </div>
         <button
           className="btn btn-sm"
-          disabled={syncing}
+          disabled={syncing || closed}
           onClick={handleSync}
           type="button"
         >
@@ -200,13 +233,17 @@ export function FundDetail({
                     </td>
                     <td onClick={() => onEditRecord(tx)}>
                       <span
-                        className={`type-tag${tx.amount > 0 ? ' buy' : ''}`}
+                        className={`type-tag${tx.kind === 'sell' ? ' sell' : tx.amount > 0 ? ' buy' : ''}`}
                       >
                         {recordType(tx)}
                       </span>
                     </td>
                     <td onClick={() => onEditRecord(tx)}>
-                      {tx.amount > 0 ? `¥${formatMoney(tx.amount)}` : '—'}
+                      {tx.kind === 'sell'
+                        ? `¥${formatMoney(tx.amount)}`
+                        : tx.amount > 0
+                          ? `¥${formatMoney(tx.amount)}`
+                          : '—'}
                     </td>
                     <td onClick={() => onEditRecord(tx)}>
                       {tx.confirmedNav > 0 ? tx.confirmedNav.toFixed(4) : '—'}

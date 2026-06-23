@@ -10,7 +10,7 @@ import {
 
 interface SettingsPageProps {
   funds: Fund[];
-  onImport: (data: ImportResult) => boolean;
+  onImport: (data: ImportResult) => Promise<boolean>;
   onSyncAll: () => Promise<SyncResult[]>;
   onReset: () => void;
 }
@@ -39,8 +39,8 @@ export function SettingsPage({
     setImportMsg(null);
     try {
       const data = await importFundsFromFile(file);
-      if (onImport(data)) {
-        setImportMsg(`已导入 ${data.funds.length} 只基金`);
+      if (await onImport(data)) {
+        setImportMsg(`已导入 ${data.funds.length} 只基金并完成净值同步`);
       }
     } catch (err) {
       setImportMsg(err instanceof Error ? err.message : '导入失败');

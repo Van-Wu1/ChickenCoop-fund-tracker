@@ -12,11 +12,13 @@ import { IndexTicker } from './components/layout/IndexTicker';
 import { TopHeader } from './components/layout/TopHeader';
 import type {
   BatchDcaInput,
+  ConvertFundInput,
   Fund,
   FundSearchResult,
   MarketIndex,
   NewRecordInput,
   Overlay,
+  SellClearInput,
   Tab,
   Transaction,
 } from './types';
@@ -32,10 +34,14 @@ import {
 import { loadFunds, resetFunds, saveFunds } from './utils/storage';
 import { syncFundComplete, type SyncResult } from './utils/applyNavUpdate';
 import { fetchNavMapForRange } from './utils/fundApi';
-import { getNavForDate } from './utils/backfillNav';
+import { getExactNavForDate, getNavForDate } from './utils/backfillNav';
 import { fetchMarketIndices } from './utils/marketApi';
 import type { ImportResult } from './utils/importData';
+import { logChickenHealth, getChickenTier } from './utils/syncChickenHealth';
+import { convertFund, sellClearFund } from './utils/fundOperations';
 import { useSyncTerminal } from './hooks/useSyncTerminal';
+import { ConvertForm } from './components/ConvertForm';
+import { SellClearForm } from './components/SellClearForm';
 import './App.css';
 
 function App() {
@@ -102,28 +108,44 @@ function App() {
   );
 
   const handleAddRecord = useCallback(
-    (input: NewRecordInput) => {
+    async (input: NewRecordInput) => {
       if (!selectedFundId) return;
-      setFunds((prev) =>
-        prev.map((f) =>
-          f.id === selectedFundId ? addRecordToFund(f, input) : f,
-        ),
-      );
+      const fund = fundsRef.current.find((f) => f.id === selectedFundId);
+      if (!fund) return;
+
+      const withRecord = addRecordToFund(fund, input);
+      try {
+        const { fund: synced } = await syncFundComplete(withRecord);
+        setFunds((prev) =>
+          prev.map((f) => (f.id === selectedFundId ? synced : f)),
+        );
+      } catch {
+        setFunds((prev) =>
+          prev.map((f) => (f.id === selectedFundId ? withRecord : f)),
+        );
+      }
       setOverlay('fund-detail');
     },
     [selectedFundId],
   );
 
   const handleUpdateRecord = useCallback(
-    (input: NewRecordInput) => {
+    async (input: NewRecordInput) => {
       if (!selectedFundId || !editingRecord) return;
-      setFunds((prev) =>
-        prev.map((f) =>
-          f.id === selectedFundId
-            ? updateFundTransaction(f, editingRecord.id, input)
-            : f,
-        ),
-      );
+      const fund = fundsRef.current.find((f) => f.id === selectedFundId);
+      if (!fund) return;
+
+      const withRecord = updateFundTransaction(fund, editingRecord.id, input);
+      try {
+        const { fund: synced } = await syncFundComplete(withRecord);
+        setFunds((prev) =>
+          prev.map((f) => (f.id === selectedFundId ? synced : f)),
+        );
+      } catch {
+        setFunds((prev) =>
+          prev.map((f) => (f.id === selectedFundId ? withRecord : f)),
+        );
+      }
       setEditingRecord(null);
       setOverlay('fund-detail');
     },
@@ -175,7 +197,9 @@ function App() {
         navMap,
         getPurchaseDates(fund),
       ).map((input) => {
-        const nav = getNavForDate(navMap, input.date);
+        const nav =
+          getExactNavForDate(navMap, input.date) ??
+          getNavForDate(navMap, input.date);
         if (nav && input.confirmedNav <= 0) {
           return {
             ...input,
@@ -199,6 +223,41 @@ function App() {
     [selectedFundId, funds],
   );
 
+  const handleSellClear = useCallback(
+    (input: SellClearInput) => {
+      if (!selectedFundId) return;
+      try {
+        setFunds((prev) =>
+          prev.map((f) =>
+            f.id === selectedFundId ? sellClearFund(f, input) : f,
+          ),
+        );
+        setOverlay('fund-detail');
+      } catch (err) {
+        alert(err instanceof Error ? err.message : '清仓失败');
+      }
+    },
+    [selectedFundId],
+  );
+
+  const handleConvert = useCallback(
+    async (input: ConvertFundInput) => {
+      if (!selectedFundId) return;
+      const source = funds.find((f) => f.id === selectedFundId);
+      if (!source) return;
+
+      const { funds: nextFunds, targetFundId } = convertFund(
+        funds,
+        source,
+        input,
+      );
+      setFunds(nextFunds);
+      setSelectedFundId(targetFundId);
+      setOverlay('fund-detail');
+    },
+    [selectedFundId, funds],
+  );
+
   const handleAddFromSearch = useCallback(
     (item: FundSearchResult) => {
       handleAddFund(item.code, item.name, item.sector);
@@ -206,26 +265,66 @@ function App() {
     [handleAddFund],
   );
 
-  const handleReset = useCallback(() => {
-    if (confirm('确定重置为 Excel 中的初始数据？当前修改将丢失。')) {
-      setFunds(resetFunds());
-      setTab('holdings');
-      setOverlay(null);
-      setSelectedFundId(null);
-    }
-  }, []);
+  const handleReset = useCallback(async () => {
+    if (!confirm('确定重置为 Excel 中的初始数据？当前修改将丢失。')) return;
 
-  const handleImport = useCallback((data: ImportResult): boolean => {
-    const msg = `将导入 ${data.funds.length} 只基金，并替换当前全部数据。\n\n确定继续吗？`;
-    if (!confirm(msg)) return false;
-
-    setFunds(data.funds);
-    setSelectedFundId(null);
-    setEditingRecord(null);
-    setOverlay(null);
+    const seed = resetFunds();
+    setFunds(seed);
     setTab('holdings');
-    return true;
-  }, []);
+    setOverlay(null);
+    setSelectedFundId(null);
+
+    terminalLog('已重置，正在同步官方净值…', 'prompt');
+    const syncedById = new Map<string, Fund>();
+    for (const fund of seed) {
+      try {
+        const { fund: synced } = await syncFundComplete(fund);
+        syncedById.set(synced.id, synced);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : '同步失败';
+        terminalLog(`  ✗ ${fund.name} · ${message}`, 'error');
+        syncedById.set(fund.id, fund);
+      }
+    }
+    if (syncedById.size > 0) {
+      setFunds((prev) => prev.map((f) => syncedById.get(f.id) ?? f));
+    }
+    terminalLog('净值同步完毕', 'success');
+  }, [terminalLog]);
+
+  const handleImport = useCallback(
+    async (data: ImportResult): Promise<boolean> => {
+      const msg = `将导入 ${data.funds.length} 只基金，并替换当前全部数据。\n\n导入后会自动同步官方净值，确定继续吗？`;
+      if (!confirm(msg)) return false;
+
+      setFunds(data.funds);
+      setSelectedFundId(null);
+      setEditingRecord(null);
+      setOverlay(null);
+      setTab('holdings');
+
+      terminalLog('导入完成，正在同步官方净值…', 'prompt');
+      const syncedById = new Map<string, Fund>();
+      for (const fund of data.funds) {
+        try {
+          const { fund: synced } = await syncFundComplete(fund);
+          syncedById.set(synced.id, synced);
+          terminalLog(`  ✓ ${synced.name}`, 'success');
+        } catch (err) {
+          const message = err instanceof Error ? err.message : '同步失败';
+          terminalLog(`  ✗ ${fund.name} · ${message}`, 'error');
+          syncedById.set(fund.id, fund);
+        }
+      }
+      if (syncedById.size > 0) {
+        setFunds((prev) => prev.map((f) => syncedById.get(f.id) ?? f));
+      }
+      terminalLog('净值同步完毕', 'success');
+
+      return true;
+    },
+    [terminalLog],
+  );
 
   const handleDeleteFund = useCallback(
     (id: string) => {
@@ -259,10 +358,7 @@ function App() {
       try {
         const { fund: updated, result } = await syncFundComplete(fund);
         setFunds((prev) => prev.map((f) => (f.id === updated.id ? updated : f)));
-        terminalLog(
-          result.success ? `  ✓ 精神不错 · ${result.message}` : `  ✗ 有点蔫 · ${result.message}`,
-          result.success ? 'success' : 'error',
-        );
+        logChickenHealth(terminalLog, updated, result, '  ');
         return result;
       } catch (err) {
         const message = err instanceof Error ? err.message : '同步失败';
@@ -287,10 +383,7 @@ function App() {
         const { fund: updated, result } = await syncFundComplete(fund);
         updatedById.set(updated.id, updated);
         results.push(result);
-        terminalLog(
-          result.success ? `    ✓ 状态良好 · ${result.message}` : `    ✗ 有点蔫 · ${result.message}`,
-          result.success ? 'success' : 'error',
-        );
+        logChickenHealth(terminalLog, updated, result, '    ');
       } catch (err) {
         const message = err instanceof Error ? err.message : '同步失败';
         results.push({
@@ -310,10 +403,18 @@ function App() {
     }
 
     const ok = results.filter((r) => r.success).length;
-    terminalLog(
-      `体检完毕，${ok}/${results.length} 只小鸡都挺精神 🐣`,
-      ok === results.length ? 'success' : ok > 0 ? 'info' : 'error',
-    );
+    const tiers = list.map((f) => getChickenTier(updatedById.get(f.id) ?? f));
+    const dying = tiers.filter((t) => t === 'dying').length;
+    const weak = tiers.filter((t) => t === 'weak').length;
+    const plump = tiers.filter((t) => t === 'great').length;
+
+    let summary = `体检完毕 ${ok}/${results.length} 只`;
+    if (dying > 0) summary += `，${dying} 只要死了`;
+    else if (weak > 0) summary += `，${weak} 只营养不良`;
+    else if (plump > 0) summary += `，${plump} 只膘肥体壮 🐣`;
+    else summary += ' 都挺精神 🐣';
+
+    terminalLog(summary, ok === results.length ? 'success' : ok > 0 ? 'info' : 'error');
 
     return results;
   }, [terminalLog]);
@@ -380,12 +481,18 @@ function App() {
               onAddRecord={() => setOverlay('add-record')}
               onBack={closeOverlay}
               onBatchDca={() => setOverlay('batch-dca')}
+              onConvert={() => setOverlay('convert')}
               onDeleteFund={() => handleDeleteFund(selectedFund.id)}
               onDeleteRecord={handleDeleteRecordById}
               onEditRecord={(tx) => {
+                if (tx.kind === 'sell') {
+                  alert('卖出清仓记录暂不支持编辑，如需修改请删除该条记录后重新操作');
+                  return;
+                }
                 setEditingRecord(tx);
                 setOverlay('edit-record');
               }}
+              onSellClear={() => setOverlay('sell-clear')}
               onSync={handleSyncFund}
             />
           )}
@@ -418,6 +525,22 @@ function App() {
               fundName={selectedFund.name}
               onBack={() => setOverlay('fund-detail')}
               onSubmit={handleBatchDca}
+            />
+          )}
+
+          {overlay === 'sell-clear' && selectedFund && (
+            <SellClearForm
+              fund={selectedFund}
+              onBack={() => setOverlay('fund-detail')}
+              onSubmit={handleSellClear}
+            />
+          )}
+
+          {overlay === 'convert' && selectedFund && (
+            <ConvertForm
+              fund={selectedFund}
+              onBack={() => setOverlay('fund-detail')}
+              onSubmit={handleConvert}
             />
           )}
 

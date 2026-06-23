@@ -42,11 +42,6 @@ export function RecordForm({
   const [fee, setFee] = useState(() =>
     defaults?.fee !== undefined ? String(defaults.fee) : '0',
   );
-  const [unitNav, setUnitNav] = useState(() =>
-    defaults?.unitNav !== null && defaults?.unitNav !== undefined
-      ? String(defaults.unitNav)
-      : '',
-  );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,7 +50,7 @@ export function RecordForm({
       amount: mode === 'buy' ? parseFloat(amount) || 0 : 0,
       confirmedNav: mode === 'buy' ? parseFloat(confirmedNav) || 0 : 0,
       fee: parseFloat(fee) || 0,
-      unitNav: unitNav ? parseFloat(unitNav) : null,
+      unitNav: null,
       isNavOnly: mode === 'nav',
     });
   };
@@ -144,19 +139,9 @@ export function RecordForm({
           </FormSection>
         )}
 
-        <FormSection title="收盘" footer="填写当日单位净值，用于计算市值与收益">
-          <FormRow label="单位净值">
-            <input
-              className="form-input"
-              inputMode="decimal"
-              placeholder="0.0000"
-              type="number"
-              step="0.0001"
-              value={unitNav}
-              onChange={(e) => setUnitNav(e.target.value)}
-            />
-          </FormRow>
-        </FormSection>
+        <p className="form-hint">
+          收盘净值由「同步净值」自动从天天基金拉取，无需手填。
+        </p>
 
         {onDelete && (
           <div className="form-danger-zone">

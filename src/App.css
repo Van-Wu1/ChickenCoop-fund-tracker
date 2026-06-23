@@ -346,7 +346,7 @@ input {
 /* ── Sync terminal (sidebar) ── */
 .sync-terminal {
   flex-shrink: 0;
-  height: 88px;
+  height: 108px;
   display: flex;
   flex-direction: column;
   background: #0d1117;
@@ -996,6 +996,12 @@ input {
   min-width: 20px;
   text-align: center;
   padding: 0 4px;
+}
+
+.tag-closed {
+  color: var(--text-secondary);
+  border-color: var(--border);
+  background: var(--surface-muted);
 }
 
 .tag-date {
@@ -1655,6 +1661,22 @@ input {
   border-color: #2da44e66;
 }
 
+.type-tag.sell {
+  background: var(--danger-subtle);
+  color: var(--danger);
+  border-color: #cf222e66;
+}
+
+.fund-closed-banner {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
 .table-status {
   text-align: center;
   padding: 32px;
@@ -1886,6 +1908,29 @@ input {
   color: var(--text-secondary);
   padding: 8px;
   font-size: 14px;
+}
+
+.form-hint {
+  margin: 0 16px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.form-hint-warn {
+  color: var(--danger);
+}
+
+.form-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.form-inline .form-input {
+  flex: 1;
+  min-width: 0;
 }
 
 .record-row {

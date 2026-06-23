@@ -26,20 +26,26 @@ function migrateFund(fund: Fund): Fund {
   return { ...fund, transactions: rebuildTransactions(inputs) };
 }
 
-function getDefaultFunds(): Fund[] {
+function getSeedFunds(): Fund[] {
   return structuredClone(seedFunds).map(migrateFund);
 }
 
 export function loadFunds(): Fund[] {
+  const seed = getSeedFunds();
+
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      return (JSON.parse(raw) as Fund[]).map(migrateFund);
+      const saved = (JSON.parse(raw) as Fund[]).map(migrateFund);
+      if (saved.length > 0 || seed.length === 0) {
+        return saved;
+      }
     }
   } catch {
     // fall through to seed data
   }
-  return getDefaultFunds();
+
+  return seed;
 }
 
 export function saveFunds(funds: Fund[]): void {
@@ -48,5 +54,5 @@ export function saveFunds(funds: Fund[]): void {
 
 export function resetFunds(): Fund[] {
   localStorage.removeItem(STORAGE_KEY);
-  return getDefaultFunds();
+  return getSeedFunds();
 }

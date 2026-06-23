@@ -67,6 +67,37 @@ export function enumerateDates(
 export function transactionToInput(
   t: Transaction,
 ): NewRecordInput & { id?: string } {
+  if (t.kind === 'sell') {
+    return {
+      id: t.id,
+      date: t.date,
+      amount: t.amount,
+      confirmedNav: t.confirmedNav,
+      fee: t.fee,
+      unitNav: t.unitNav,
+      isNavOnly: false,
+      recordKind: 'sell',
+      sellShares: t.confirmedShares,
+      redemptionAmount: t.amount,
+    };
+  }
+
+  const isFailedPurchase =
+    t.amount > 0 && t.confirmedNav <= 0 && t.confirmedShares <= 0;
+
+  if (isFailedPurchase) {
+    return {
+      id: t.id,
+      date: t.date,
+      amount: 0,
+      confirmedNav: 0,
+      fee: 0,
+      unitNav: t.unitNav,
+      isNavOnly: true,
+      recordKind: 'nav',
+    };
+  }
+
   const isNavOnly =
     t.amount === 0 && t.confirmedShares === 0 && t.confirmedNav === 0;
   return {
@@ -77,6 +108,7 @@ export function transactionToInput(
     fee: t.fee,
     unitNav: t.unitNav,
     isNavOnly,
+    recordKind: isNavOnly ? 'nav' : 'buy',
   };
 }
 
@@ -172,17 +204,56 @@ export function computeTransaction(
 ): Transaction {
   const prevShares = prev?.holdingShares ?? 0;
   const prevMarketValue = prev?.marketValue ?? 0;
+  const kind = input.recordKind ?? (input.isNavOnly ? 'nav' : 'buy');
+
+  if (kind === 'sell') {
+    const nav = input.unitNav ?? input.confirmedNav;
+    const sharesToSell = input.sellShares ?? prevShares;
+    const redemptionValue =
+      input.redemptionAmount ?? (sharesToSell > 0 ? sharesToSell * nav : 0);
+    const prevCost = prev?.holdingAmount ?? 0;
+    const basisMarketValue =
+      prevMarketValue > 0
+        ? prevMarketValue
+        : prevShares > 0 && prev?.unitNav
+          ? prevShares * prev.unitNav
+          : prevCost;
+
+    return {
+      id: crypto.randomUUID(),
+      date: input.date,
+      kind: 'sell',
+      confirmedShares: sharesToSell,
+      confirmedNav: nav,
+      amount: redemptionValue,
+      fee: input.fee,
+      holdingShares: 0,
+      holdingAmount: 0,
+      unitNav: nav,
+      dailyChange:
+        nav && prev?.unitNav ? (nav - prev.unitNav) / prev.unitNav : null,
+      marketValue: redemptionValue,
+      dailyProfit: redemptionValue - basisMarketValue,
+      cumulativeProfit: redemptionValue - prevCost,
+    };
+  }
 
   let confirmedShares = 0;
   let holdingShares = prevShares;
-  let holdingAmount = (prev?.holdingAmount ?? 0) + input.amount;
+  let holdingAmount = prev?.holdingAmount ?? 0;
 
-  if (!input.isNavOnly && input.amount > 0 && input.confirmedNav > 0) {
+  const isSuccessfulPurchase =
+    !input.isNavOnly &&
+    input.recordKind !== 'sell' &&
+    input.amount > 0 &&
+    input.confirmedNav > 0;
+
+  if (isSuccessfulPurchase) {
     confirmedShares = input.amount / input.confirmedNav;
     holdingShares = prevShares + confirmedShares;
+    holdingAmount += input.amount + input.fee;
   } else if (input.isNavOnly) {
     holdingShares = prevShares;
-    holdingAmount = prev?.holdingAmount ?? 0;
   }
 
   const unitNav = input.unitNav;
@@ -208,6 +279,7 @@ export function computeTransaction(
   return {
     id: crypto.randomUUID(),
     date: input.date,
+    kind,
     confirmedShares,
     confirmedNav: input.confirmedNav,
     amount: input.amount,
@@ -237,7 +309,47 @@ export function getLatestPricedTransaction(fund: Fund): Transaction | null {
   return [...priced].sort((a, b) => compareDate(a.date, b.date)).at(-1)!;
 }
 
+export function getFundStatus(fund: Fund): 'holding' | 'closed' {
+  if (fund.status === 'closed') return 'closed';
+  const latest = getLatestTransaction(fund);
+  if (latest?.kind === 'sell') return 'closed';
+  return 'holding';
+}
+
+export function isFundClosed(fund: Fund): boolean {
+  return getFundStatus(fund) === 'closed';
+}
+
+function getClosedFundStats(fund: Fund) {
+  const sellTx = [...fund.transactions]
+    .filter((t) => t.date && t.kind === 'sell')
+    .sort((a, b) => compareDate(a.date, b.date))
+    .at(-1);
+
+  const realizedProfit = sellTx?.cumulativeProfit ?? 0;
+  const profitRate =
+    sellTx && sellTx.amount > 0
+      ? realizedProfit / (sellTx.amount - realizedProfit)
+      : 0;
+
+  return {
+    cost: 0,
+    marketValue: 0,
+    profit: realizedProfit,
+    profitRate: Number.isFinite(profitRate) ? profitRate : 0,
+    dailyProfit: 0,
+    dailyChange: null,
+    profitDate: sellTx?.date ?? null,
+    holdingShares: 0,
+    closed: true as const,
+  };
+}
+
 export function getFundStats(fund: Fund) {
+  if (isFundClosed(fund)) {
+    return getClosedFundStats(fund);
+  }
+
   const priced = getLatestPricedTransaction(fund);
   const latest = getLatestTransaction(fund);
   const basis = priced ?? latest;
@@ -261,6 +373,7 @@ export function getFundStats(fund: Fund) {
     dailyChange,
     profitDate,
     holdingShares,
+    closed: false as const,
   };
 }
 
@@ -268,18 +381,24 @@ export function getPortfolioStats(funds: Fund[]): PortfolioStats {
   let totalCost = 0;
   let totalMarketValue = 0;
   let totalDailyProfit = 0;
+  let totalProfit = 0;
 
   for (const fund of funds) {
     const stats = getFundStats(fund);
+    if (stats.closed) {
+      totalProfit += stats.profit;
+      continue;
+    }
     totalCost += stats.cost;
     totalMarketValue += stats.marketValue;
     totalDailyProfit += stats.dailyProfit;
+    totalProfit += stats.profit;
   }
 
   return {
     totalCost,
     totalMarketValue,
-    totalProfit: totalMarketValue - totalCost,
+    totalProfit,
     totalDailyProfit,
   };
 }

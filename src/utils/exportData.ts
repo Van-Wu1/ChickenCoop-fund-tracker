@@ -37,6 +37,7 @@ export function exportFundsJson(funds: Fund[]): void {
 }
 
 function recordTypeLabel(tx: Fund['transactions'][number]): string {
+  if (tx.kind === 'sell') return '卖出清仓';
   if (tx.amount > 0) return '定投购入';
   if (tx.unitNav !== null) return '收盘更新';
   return '待完善';

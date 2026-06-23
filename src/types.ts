@@ -1,3 +1,5 @@
+export type RecordKind = 'buy' | 'nav' | 'sell';
+
 export interface Transaction {
   id: string;
   date: string;
@@ -12,6 +14,7 @@ export interface Transaction {
   marketValue: number | null;
   dailyProfit: number | null;
   cumulativeProfit: number | null;
+  kind?: RecordKind;
 }
 
 export interface Fund {
@@ -19,6 +22,7 @@ export interface Fund {
   code: string;
   name: string;
   sector?: string;
+  status?: 'holding' | 'closed';
   transactions: Transaction[];
 }
 
@@ -38,7 +42,9 @@ export type Overlay =
   | 'add-record'
   | 'edit-record'
   | 'batch-dca'
-  | 'add-fund';
+  | 'add-fund'
+  | 'convert'
+  | 'sell-clear';
 
 export interface BatchDcaInput {
   startDate: string;
@@ -62,6 +68,28 @@ export interface NewRecordInput {
   fee: number;
   unitNav: number | null;
   isNavOnly: boolean;
+  recordKind?: RecordKind;
+  sellShares?: number;
+  redemptionAmount?: number;
+}
+
+export interface SellClearInput {
+  date: string;
+  unitNav: number;
+  fee?: number;
+  redemptionAmount?: number;
+}
+
+export interface ConvertFundInput {
+  date: string;
+  targetCode: string;
+  targetName: string;
+  targetSector?: string;
+  sourceUnitNav: number;
+  targetConfirmedNav: number;
+  sourceFee?: number;
+  targetFee?: number;
+  redemptionAmount?: number;
 }
 
 export interface FundNavQuote {

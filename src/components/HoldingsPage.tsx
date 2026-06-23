@@ -4,6 +4,7 @@ import {
   formatDisplayDate,
   formatPercent,
   getFundStats,
+  isFundClosed,
   getPortfolioStats,
   profitColor,
 } from '../utils/calculations';
@@ -114,6 +115,7 @@ export function HoldingsPage({
           <tbody>
             {funds.map((fund) => {
               const s = getFundStats(fund);
+              const closed = isFundClosed(fund);
               const latest = fund.transactions[fund.transactions.length - 1];
               const navDate = latest?.date ? formatDisplayDate(latest.date) : '';
               const profitDateLabel = s.profitDate
@@ -136,9 +138,10 @@ export function HoldingsPage({
                   <td className="col-fund">
                     <div className="holding-name">{fund.name}</div>
                     <div className="holding-sub">
-                      <span>¥{formatMoney(s.cost)}</span>
+                      <span>{closed ? '已清仓' : `¥${formatMoney(s.cost)}`}</span>
                       {navDate && <span className="tag tag-date">{navDate}</span>}
-                      {latest?.amount > 0 && (
+                      {closed && <span className="tag tag-closed">清仓</span>}
+                      {!closed && latest?.amount > 0 && (
                         <span className="tag tag-ding">定</span>
                       )}
                     </div>
@@ -147,15 +150,18 @@ export function HoldingsPage({
                   <td
                     className="col-num holding-change"
                     style={{
-                      color:
-                        s.dailyChange !== null
+                      color: closed
+                        ? 'var(--text-muted)'
+                        : s.dailyChange !== null
                           ? profitColor(s.dailyChange)
                           : 'var(--text-muted)',
                     }}
                   >
-                    {s.dailyChange !== null
-                      ? formatPercent(s.dailyChange)
-                      : '—'}
+                    {closed
+                      ? '—'
+                      : s.dailyChange !== null
+                        ? formatPercent(s.dailyChange)
+                        : '—'}
                   </td>
                   <td className="col-sector holding-sector">
                     {fund.sector ?? '—'}
@@ -164,10 +170,11 @@ export function HoldingsPage({
                     <div className="col-stacked">
                       <span
                         className="cell-primary"
-                        style={{ color: profitColor(s.dailyProfit) }}
+                        style={{ color: profitColor(closed ? 0 : s.dailyProfit) }}
                       >
-                        {s.dailyProfit >= 0 ? '+' : ''}
-                        {formatMoney(s.dailyProfit)}
+                        {closed
+                          ? '—'
+                          : `${s.dailyProfit >= 0 ? '+' : ''}${formatMoney(s.dailyProfit)}`}
                       </span>
                       <span className="cell-secondary">{profitDateLabel}</span>
                     </div>

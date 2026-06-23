@@ -1,10 +1,24 @@
-# Dependencies & build
+# =============================================================================
+# 农场主的鸡窝 — Git 忽略规则
+# 原则：构建产物、缓存、密钥、个人持仓数据一律不进仓库
+# =============================================================================
+
+# --- 依赖与构建产物 ---
 node_modules/
 dist/
 dist-ssr/
+build/
 *.local
 
-# Logs
+# --- 工具链缓存 ---
+.vite/
+*.tsbuildinfo
+.eslintcache
+coverage/
+.turbo/
+.cache/
+
+# --- 日志与包管理器 ---
 logs/
 *.log
 npm-debug.log*
@@ -12,50 +26,73 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+.pnpm-store/
+.yarn/cache
+.yarn/unplugged
+.yarn/install-state.gz
+.pnp.*
 
-# TypeScript / Vite cache
-*.tsbuildinfo
-.vite/
-
-# Environment & secrets
+# --- 环境变量与密钥 ---
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+credentials*.json
+secrets*.json
 
-# Editor & OS
+# --- 编辑器与操作系统 ---
 .vscode/*
 !.vscode/extensions.json
 .idea/
-.DS_Store
-Thumbs.db
-desktop.ini
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+.DS_Store
+Thumbs.db
+desktop.ini
+Desktop.ini
+ehthumbs.db
 
-# Cursor / local tooling
+# --- Cursor / AI / 临时文件 ---
 .cursor/
-tmp.txt
+.claude/
 *.tmp
+tmp.txt
+*~
+*.swp
+*.swo
 
-# ── Personal fund data (never commit) ──
+# =============================================================================
+# 个人基金数据（切勿提交）
+# =============================================================================
+
+# 本地 dev 种子（复制 localFunds.example.ts 后填入）
 private/localFunds.ts
+private/localFunds.*.ts
+
+# private 目录下的数据文件（示例模板除外）
 private/*.json
 !private/funds.seed.example.json
-private/*.xlsx
-private/exports/
+private/*.{xlsx,xls,csv}
 
-# App export backups (downloaded from settings)
-农场主的鸡窝-*.json
-农场主的鸡窝-*.xlsx
-神秘代码-*.json
-神秘代码-*.xlsx
-fund-tracker-*.json
-fund-tracker-*.xlsx
-**/exports/*.json
-**/exports/*.xlsx
+# 导出/备份目录（保留 .gitkeep 占位）
+private/exports/**
+!private/exports/.gitkeep
 
-# Optional: keep example templates trackable
-!private/localFunds.example.ts
+# 应用「设置 → 导出」或手动保存在项目内的备份
+农场主的鸡窝-*
+神秘代码-*
+fund-tracker-*
+
+# 项目根目录误建的 exports 文件夹
+/exports/**
+
+# =============================================================================
+# 可提交的文件（勿在此添加 ignore）
+# private/localFunds.example.ts
+# private/funds.seed.example.json
+# src/data/emptySeed.ts
+# =============================================================================

@@ -23,7 +23,8 @@ npm run preview
 | 浏览器 `localStorage` | 否 | 日常使用的数据存在本地浏览器 |
 | `private/localFunds.ts` | **否** | 可选本地种子数据，仅 dev 模式生效 |
 | `private/localFunds.example.ts` | 是 | 空模板，复制为 `localFunds.ts` 后填入个人数据 |
-| 导出的 JSON / XLSX | **否** | 通过「设置 → 导出」生成的文件已被 `.gitignore` 排除 |
+| `private/exports/` | **否** | 手动备份目录（目录内文件被忽略，仅保留 `.gitkeep`） |
+| 导出的 JSON / XLSX | **否** | 根目录 `农场主的鸡窝-*` 等文件名已被 `.gitignore` 排除 |
 
 本地开发如需预填数据：
 
